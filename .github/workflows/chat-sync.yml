@@ -1,0 +1,24 @@
+# Add this to your .github/workflows/chat-sync.yml
+name: Chat Integration
+on:
+  workflow_dispatch:
+    inputs:
+      code_patch:
+        description: 'Base64 encoded patch'
+        required: true
+
+jobs:
+  apply-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply Patch
+        run: |
+          echo "${{ github.event.inputs.code_patch }}" | base64 -d | git apply
+      - name: Commit Changes
+        run: |
+          git config --global user.name "Voxiom TTS Bot"
+          git config --global user.email "voxiomtts@outlook.com"
+          git add .
+          git commit -m "AI-assisted code update"
+          git push

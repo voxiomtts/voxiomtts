@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 *.spec
 models/
 dist/
 build/
+EOL
