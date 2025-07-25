@@ -1,6 +1,6 @@
 # Renamed from build_win.py to avoid confusion
 import PyInstaller.__main__
-import version
+from src import version  # ✅ Correct import path
 from pathlib import Path
 
 def build():
