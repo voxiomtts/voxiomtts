@@ -1,44 +1,60 @@
+#!/usr/bin/env python3
 import os
 import sys
-from pathlib import Path
+from datetime import datetime
+from pyinstaller_versionfile import create_versionfile
 import PyInstaller.__main__
 
-# Add project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Import version with fallback
+# Import version info
+sys.path.insert(0, os.path.abspath('.'))
 try:
-    from src import version  # First try absolute import
+    from src import version
 except ImportError:
-    import version  # Fallback to relative (only for development)
+    import version
+
+def generate_version_file():
+    """Generate version resource with auto-increment build number"""
+    build_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    version_str = f"{version.__version__}.{getattr(version, '__build_num__', 0)}"
+    
+    create_versionfile(
+        output_file="version.txt",
+        version=version_str,
+        company_name="VoxiomTTS",
+        file_description="Text-to-Speech Application|Голосовой синтезатор",
+        internal_name="voxiom-tts",
+        legal_copyright="MIT License|Лицензия MIT",
+        original_filename="voxiom-tts.exe",
+        product_name="Voxiom TTS|Voxiom TTS (Рус)",
+        private_build=build_date,
+        translations=[
+            {"lang": 1033, "charset": 1252},  # English
+            {"lang": 1049, "charset": 1251}    # Russian
+        ]
+    )
 
 def build():
-    # Create versioned output dir
-    build_dir = Path(f"build/v{version.__version__}")
-    build_dir.mkdir(parents=True, exist_ok=True)
+    # Clean previous builds
+    for folder in ('build', 'dist'):
+        if os.path.exists(folder):
+            shutil.rmtree(folder)
+
+    # Generate fresh version file
+    generate_version_file()
 
     # PyInstaller configuration
-    pyi_args = [
+    PyInstaller.__main__.run([
         'src/main.py',
-        f'--distpath={build_dir}',
-        '--name=VoxiomTTS',
         '--onefile',
         '--windowed',
         '--icon=assets/voxiom.ico',
         '--add-data=src/gui/resources.qrc;gui',
         '--add-data=models/silero;models/silero',
-        '--version-file=version.rc',
-        # '--win-private-assemblies',
+        '--version-file=version.txt',
         '--noconfirm',
         '--clean',
-        '--paths=src'  # Explicitly tell PyInstaller where to look for modules
-    ]
-
-    # Add hidden imports if needed
-    if 'src.version' not in sys.modules:
-        pyi_args.append('--hidden-import=src.version')
-
-    PyInstaller.__main__.run(pyi_args)
+        '--paths=src'
+    ])
 
 if __name__ == "__main__":
     build()
