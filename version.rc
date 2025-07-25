@@ -3,24 +3,27 @@
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION     0,1,0,0
 PRODUCTVERSION  0,1,0,0
-FILEFLAGSMASK   0x3fL
-FILEFLAGS       0x0L
+FILEFLAGSMASK   0x3f
+FILEFLAGS       0x0
 FILEOS          VOS__WINDOWS32
 FILETYPE        VFT_APP
-FILESUBTYPE     VFT2_UNKNOWN
 {
     BLOCK "StringFileInfo"
     {
         BLOCK "040904b0"
         {
             VALUE "CompanyName", "VoxiomTTS"
-            VALUE "FileDescription", "Voxiom TTS, Silero TTS GUI application"
+            VALUE "FileDescription", "Text-to-Speech Application"
             VALUE "FileVersion", "0.1.0"
             VALUE "ProductVersion", "0.1.0"
-            VALUE "InternalName", "VoxiomTTS"
+            VALUE "InternalName", "voxiom-tts"
             VALUE "LegalCopyright", "MIT License"
             VALUE "OriginalFilename", "voxiom-tts.exe"
-            VALUE "ProductName", "Voxiom Text-to-Speech GUI"
+            VALUE "ProductName", "Voxiom TTS"
         }
+    }
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x409, 1252
     }
 }
