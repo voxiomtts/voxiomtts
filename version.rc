@@ -1,0 +1,26 @@
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   0x3fL
+FILEFLAGS       0x0L
+FILEOS          VOS__WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "040904b0"
+        {
+            VALUE "CompanyName", "VoxiomTTS"
+            VALUE "FileDescription", "Voxiom TTS, Silero TTS GUI application"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "ProductVersion", "1.0.0"
+            VALUE "InternalName", "VoxiomTTS"
+            VALUE "LegalCopyright", "MIT License"
+            VALUE "OriginalFilename", "voxiom-tts.exe"
+            VALUE "ProductName", "Voxiom Text-to-Speech GUI"
+        }
+    }
+}
