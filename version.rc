@@ -1,0 +1,4 @@
+// Updated with voxiomtts branding
+VALUE "CompanyName", "VoxiomTTS"
+VALUE "ProductName", "Voxiom Text-to-Speech"
+VALUE "OriginalFilename", "voxiom-tts.exe"  // Changed executable name
