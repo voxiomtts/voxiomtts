@@ -1,0 +1,30 @@
+name: Build Windows Executable
+
+on:
+  push:
+    tags: v*
+  workflow_dispatch:
+
+env:
+  REPO_NAME: voxiomtts/voxiomtts  # Updated repo path
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pywin32
+    - name: Build executable
+      run: python build_windows.py
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: VoxiomTTS-v${{ github.ref_name }}
+        path: build/v${{ github.ref_name }}/VoxiomTTS.exe
