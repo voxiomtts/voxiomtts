@@ -19,7 +19,7 @@ FILESUBTYPE     VFT2_UNKNOWN
             VALUE "ProductVersion", "1.0.0"
             VALUE "InternalName", "VoxiomTTS"
             VALUE "LegalCopyright", "MIT License"
-            VALUE "OriginalFilename", "voxiomtts.exe"
+            VALUE "OriginalFilename", "voxiom-tts.exe"
             VALUE "ProductName", "Voxiom Text-to-Speech GUI"
         }
     }
