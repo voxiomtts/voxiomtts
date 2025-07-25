@@ -1,0 +1,40 @@
+name: Secure Patch Review
+on:
+  workflow_dispatch:
+    inputs:
+      patch_b64:
+        description: 'Base64-encoded git patch'
+        required: true
+        type: string
+
+jobs:
+  verify-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Patch
+        id: validate
+        run: |
+          TEMP_PATCH="$(mktemp)"
+          echo "${{ inputs.patch_b64 }}" | base64 -d > "$TEMP_PATCH"
+
+          # Security checks
+          git apply --check "$TEMP_PATCH" || exit 1
+          ! grep -qE 'secret|token|key' "$TEMP_PATCH" || exit 1
+
+          echo "safe_patch=$(base64 -w0 "$TEMP_PATCH")" >> $GITHUB_OUTPUT
+
+      - name: Create Review PR
+        if: steps.validate.outputs.safe_patch
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Patch review: ${{ github.run_id }}"
+          branch: "patch-review/${{ github.run_id }}"
+          body: |
+            ### AI-Proposed Changes
+            ```diff
+            ${{ steps.validate.outputs.safe_patch | base64 -d }}
+            ```
+            **Verify before merging!**
