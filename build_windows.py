@@ -1,22 +1,26 @@
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import PyInstaller.__main__
-# In build_windows.py
-try:
-    import version  # Try relative import
-except ImportError:
-    from src import version  # Fallback to absolute
 from pathlib import Path
+import PyInstaller.__main__
+
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import version with fallback
+try:
+    from src import version  # First try absolute import
+except ImportError:
+    import version  # Fallback to relative (only for development)
 
 def build():
     # Create versioned output dir
     build_dir = Path(f"build/v{version.__version__}")
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    PyInstaller.__main__.run([
+    # PyInstaller configuration
+    pyi_args = [
         'src/main.py',
-        f'--distpath={build_dir}',  # Version-specific output
+        f'--distpath={build_dir}',
         '--name=VoxiomTTS',
         '--onefile',
         '--windowed',
@@ -26,8 +30,15 @@ def build():
         '--version-file=version.rc',
         '--win-private-assemblies',
         '--noconfirm',
-        '--clean'
-    ])
+        '--clean',
+        '--paths=src'  # Explicitly tell PyInstaller where to look for modules
+    ]
+
+    # Add hidden imports if needed
+    if 'src.version' not in sys.modules:
+        pyi_args.append('--hidden-import=src.version')
+
+    PyInstaller.__main__.run(pyi_args)
 
 if __name__ == "__main__":
     build()
