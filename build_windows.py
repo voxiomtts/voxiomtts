@@ -28,7 +28,7 @@ def build():
         '--add-data=src/gui/resources.qrc;gui',
         '--add-data=models/silero;models/silero',
         '--version-file=version.rc',
-        '--win-private-assemblies',
+        # '--win-private-assemblies',
         '--noconfirm',
         '--clean',
         '--paths=src'  # Explicitly tell PyInstaller where to look for modules
