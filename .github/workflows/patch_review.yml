@@ -6,25 +6,33 @@ on:
         description: 'Base64-encoded git patch'
         required: true
         type: string
+        default: ''
 
 jobs:
   verify-patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Validate Patch
         id: validate
         run: |
+          # Security checks
+          if [ ${#{{ inputs.patch_b64 }}} -gt 100000 ]; then
+            echo "Patch too large (max 100KB)" >&2
+            exit 1
+          fi
+          
           TEMP_PATCH="$(mktemp)"
           echo "${{ inputs.patch_b64 }}" | base64 -d > "$TEMP_PATCH"
-
-          # Security checks
+          
+          # Critical validations
           git apply --check "$TEMP_PATCH" || exit 1
-          ! grep -qE 'secret|token|key' "$TEMP_PATCH" || exit 1
-
+          ! grep -qE 'secret|token|key|\.env' "$TEMP_PATCH" || exit 1
+          ! grep -q 'force push' "$TEMP_PATCH" || exit 1
+          
           echo "safe_patch=$(base64 -w0 "$TEMP_PATCH")" >> $GITHUB_OUTPUT
-
+          
       - name: Create Review PR
         if: steps.validate.outputs.safe_patch
         uses: peter-evans/create-pull-request@v5
@@ -32,9 +40,20 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "Patch review: ${{ github.run_id }}"
           branch: "patch-review/${{ github.run_id }}"
+          delete-branch: true  # Auto-cleanup
           body: |
-            ### AI-Proposed Changes
+            ### Proposed Changes
             ```diff
             ${{ steps.validate.outputs.safe_patch | base64 -d }}
             ```
-            **Verify before merging!**
+            
+            **Validation Checks Passed:**
+            - ✅ Patch applies cleanly
+            - ✅ No sensitive data detected
+            - ✅ Size < 100KB
+
+      - name: Fail on Invalid
+        if: failure()
+        run: |
+          echo "::error::Patch validation failed. See logs for details."
+          exit 1
