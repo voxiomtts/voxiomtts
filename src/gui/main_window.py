@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QTextEdit, 
-                              QPushButton, QComboBox, QSlider, QLabel)
+                              QPushButton, QComboBox, QSlider, QLabel, QMessageBox)
 from PySide6.QtCore import Qt, Slot
 from src.tts.engine import TTSEngine
 
@@ -45,4 +45,7 @@ class MainWindow(QMainWindow):
     def on_speak(self):
         text = self.text_input.toPlainText()
         voice = self.voice_box.currentText()
-        self.engine.synthesize(text, voice)
+        try:
+          self.engine.synthesize(text, voice)
+        except Exception as e:
+          QMessageBox.critical(self, "Error", f"TTS Failed: {str(e)}")
