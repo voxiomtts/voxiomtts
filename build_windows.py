@@ -1,12 +1,8 @@
-# Renamed from build_win.py to avoid confusion
-import PyInstaller.__main__
-# Add this at the top:
 import os
 import sys
-sys.path.insert(0, os.path.abspath('.'))  # Add project root to Python path
-
-# Then import:
-from src import version  # Absolute import
+sys.path.insert(0, os.path.abspath('.'))
+import PyInstaller.__main__
+from src import version
 from pathlib import Path
 
 def build():
