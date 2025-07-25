@@ -2,12 +2,9 @@
 import os
 import sys
 import shutil
+from datetime import datetime
 from pyinstaller_versionfile import create_versionfile
 import PyInstaller.__main__
-
-# Import version info
-sys.path.insert(0, os.path.abspath('.'))
-from src import version  # Requires __version__ in version.py
 
 def build():
     # Clean previous builds
@@ -15,12 +12,12 @@ def build():
         if os.path.exists(folder):
             shutil.rmtree(folder)
 
-    # Generate version file
+    # Generate version file with date-based build ID
     create_versionfile(
         output_file="version.txt",
-        version=version.__version__,
+        version="0.1.0",  # Hardcoded version - update as needed
         company_name="VoxiomTTS",
-        file_description=f"Build: {datetime.now().strftime('%Y-%m-%d')}",  # Date as build identifier
+        file_description=f"Built: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         internal_name="voxiom-tts",
         legal_copyright="MIT License",
         original_filename="voxiom-tts.exe",
