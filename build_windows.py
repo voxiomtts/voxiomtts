@@ -27,6 +27,7 @@ def build():
     # PyInstaller build
     PyInstaller.__main__.run([
         'src/main.py',
+        '--paths=src', 
         '--onefile',
         '--windowed',
         '--icon=assets/voxiom.ico',
