@@ -1,3 +1,9 @@
+"
+# Security
+*.key
+*.token
+*.gpg
+" >> .gitignore
 __pycache__/
 *.pyc
 *.pyo
