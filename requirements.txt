@@ -1,4 +1,19 @@
-PySide6==6.7.0
-PyInstaller==6.7.0
+# Core GUI
+PySide6==6.9.1
+PyInstaller==6.7.0  # For building
+
+# TTS Engine
 torch==2.3.0
-requests==2.32.0
+torchaudio==2.3.0
+sentencepiece==0.2.0
+omegaconf==2.3.0  # Silero dependency
+
+# Audio Processing
+numpy==1.26.4
+pyaudio==0.2.14  # Main playback
+sounddevice==0.4.6  # Fallback backend
+soundfile==0.12.1  # WAV export
+
+# Utilities
+tqdm==4.66.4  # Progress bars
+requests==2.32.2  # Model downloads
