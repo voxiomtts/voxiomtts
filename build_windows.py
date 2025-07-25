@@ -38,5 +38,11 @@ def build():
         '--clean'
     ])
 
+def download_models():
+    torch.hub.download_url_to_file(
+        'https://models.silero.ai/models/tts/ru/v3_1_ru.pt',
+        'models/silero/v3_1_ru.pt'
+    )
+
 if __name__ == "__main__":
     build()
