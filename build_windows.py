@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import shutil
 from datetime import datetime
 from pyinstaller_versionfile import create_versionfile
 import PyInstaller.__main__
@@ -13,25 +14,30 @@ except ImportError:
     import version
 
 def generate_version_file():
-    """Generate version resource with auto-increment build number"""
-    build_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """Generate version resource with metadata"""
     version_str = f"{version.__version__}.{getattr(version, '__build_num__', 0)}"
     
-    create_versionfile(
-        output_file="version.txt",
-        version=version_str,
-        company_name="VoxiomTTS",
-        file_description="Text-to-Speech Application|Голосовой синтезатор",
-        internal_name="voxiom-tts",
-        legal_copyright="MIT License|Лицензия MIT",
-        original_filename="voxiom-tts.exe",
-        product_name="Voxiom TTS|Voxiom TTS (Рус)",
-        private_build=build_date,
-        translations=[
+    params = {
+        "output_file": "version.txt",
+        "version": version_str,
+        "company_name": "VoxiomTTS",
+        "file_description": "Text-to-Speech Application",
+        "internal_name": "voxiom-tts",
+        "legal_copyright": "MIT License",
+        "original_filename": "voxiom-tts.exe",
+        "product_name": "Voxiom TTS",
+        # For multilingual (English + Russian)
+        "translations": [
             {"lang": 1033, "charset": 1252},  # English
-            {"lang": 1049, "charset": 1251}    # Russian
+            {"lang": 1049, "charset": 1251}   # Russian
         ]
-    )
+    }
+    
+    # Add build timestamp as special build info
+    if hasattr(version, '__build_date__'):
+        params["special_build"] = f"Built: {version.__build_date__}"
+    
+    create_versionfile(**params)
 
 def build():
     # Clean previous builds
