@@ -1,32 +1,33 @@
 import torch
+import random
 from pathlib import Path
+from .player import AudioPlayer
 
 class TTSEngine:
     def __init__(self):
         self.device = torch.device('cpu')
-        self.models = {
-            'v3_1_ru': 'models/silero/v3_1_ru.pt',
-            'v4_ru': 'models/silero/v4_ru.pt'
-        }
-        self.speakers = {'aidar', 'baya', 'kseniya', 'xenia'}
-        self.sample_rate = 48000
+        self.player = AudioPlayer()
+        self.loaded_model = None
         
     def load_model(self, model_name):
-        model_path = Path(self.models[model_name])
+        model_path = Path(f'models/silero/{model_name}.pt')
         if not model_path.exists():
-            raise FileNotFoundError(f"Model {model_name} not found at {model_path}")
+            raise FileNotFoundError(f"Model {model_name} not found")
         
         torch.set_num_threads(4)
-        model, _ = torch.hub.load(
-            repo_or_dir='snakers4/silero-models',
-            model='silero_tts',
-            language='ru',
-            speaker=model_name
-        )
-        return model.to(self.device)
+        model = torch.package.PackageImporter(model_path).load_pickle("tts_models", "model")
+        self.loaded_model = model.to(self.device)
+        return self.loaded_model
     
-    def synthesize(self, text, voice):
-        model = self.load_model(voice)
-        audio = model.apply_tts(text=text, speaker=random.choice(self.speakers))
-        # TODO: Add audio playback
+    def synthesize(self, text, speaker):
+        if not self.loaded_model:
+            raise RuntimeError("No model loaded")
+        
+        audio = self.loaded_model.apply_tts(
+            text=text,
+            speaker=speaker,
+            sample_rate=48000,
+            put_accent=True,
+            put_yo=True
+        )
         return audio
