@@ -1,0 +1,13 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/">
+    <!-- Application icon (Windows) -->
+    <file alias="app_icon">../../assets/voxiom.ico</file>
+    
+    <!-- Qt Stylesheet -->
+    <file alias="style">styles/default.qss</file>
+    
+    <!-- Translation files (if needed) -->
+    <file alias="translations/lang_en">translations/en_US.qm</file>
+  </qresource>
+</RCC>
