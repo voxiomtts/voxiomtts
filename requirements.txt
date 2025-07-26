@@ -1,12 +1,15 @@
 # Core
-PySide6==6.9.1
-torch==2.3.0
-torchaudio==2.3.0
-numpy==1.26.4
+PySide6==6.4.3  # Last version with full 3.9 support
+numpy==1.21.6  # Compatible with Torch 1.12
 
-# Audio Backend
-sounddevice==0.4.6  # Pure Python, no DLLs needed
+# Audio
+sounddevice==0.4.4  # Legacy version for 3.9
+pyaudio==0.2.12  # Alternative backend
 
-# Silero
-sentencepiece==0.2.0
-omegaconf==2.3.0
+# TTS Engine
+torch==1.12.1+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
+torchaudio==0.12.1+cu116
+sentencepiece==0.1.96  # Last 3.9-compatible version
+
+# Dev Tools
+pyinstaller==5.6.2  # Final 3.9-compatible release
