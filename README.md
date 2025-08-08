@@ -1,3 +1,5 @@
+![Logo](./assets/voxiom256.png){: width="256" height="256" }
+
 # Voxiom TTS GUI
 
 A text-to-speech application using Silero TTS models with a modern GUI.
