@@ -13,7 +13,7 @@ A text-to-speech application using Silero TTS models with a modern GUI.
 ## Quick Start
 
 ### Windows
-1. Double-click `run_tts.bat`
+1. Double-click `run_tts.bat` ( create shortcut, set voxiom.ico from "assets" folder )
 2. The script will:
    - Check Python installation
    - Create a virtual environment
