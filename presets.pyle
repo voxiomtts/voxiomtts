@@ -1,0 +1,1976 @@
+# -*- coding: utf-8 -*- 
+import os
+import torch
+from pathlib import Path
+
+MODELS = {
+    "v2_multi": {
+        "url": "https://models.silero.ai/models/tts/multi/v2_multi.pt",
+        "file": "v2_multi.pt",
+        "size": 94371840  # ~90MB
+    },
+    "v3_en": {
+        "url": "https://models.silero.ai/models/tts/en/v3_en.pt",
+        "file": "v3_en.pt",
+        "size": 46137344  # ~44MB
+    },
+    "v3_1_ru": {
+        "url": "https://models.silero.ai/models/tts/ru/v3_1_ru.pt",
+        "file": "v3_1_ru.pt",
+        "size": 46137344  # ~44MB
+    },
+    "v4_ru": {
+        "url": "https://models.silero.ai/models/tts/ru/v4_ru.pt",
+        "file": "v4_ru.pt",
+        "size": 46137344  # ~44MB
+    }
+}
+
+def download_models():
+    models_dir = Path("models/tts")
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    for model_name, config in MODELS.items():
+        model_path = models_dir / config["file"]
+        if model_path.exists():
+            actual_size = model_path.stat().st_size
+            if actual_size == config["size"]:
+                print(f"вњ“ {model_name} already exists and is valid")
+                continue
+            else:
+                print(f"вљ  {model_name} exists but has wrong size ({actual_size} bytes), re-downloading")
+                model_path.unlink()
+
+        print(f"в¬‡ Downloading {model_name}...")
+        torch.hub.download_url_to_file(config["url"], str(model_path))
+
+        if model_path.stat().st_size == config["size"]:
+            print(f"вњ“ Successfully downloaded {model_name}")
+        else:
+            print(f"вњ— Failed to download {model_name} - file size mismatch")
+
+if __name__ == "__main__":
+    download_models()
+    print("\nModel download complete. Please verify:")
+    for model_name, config in MODELS.items():
+        path = Path("models/tts") / config["file"]
+        print(f"{model_name}: {'вњ“' if path.exists() and path.stat().st_size == config['size'] else 'вњ—'}")
+# -*- coding: utf-8 -*-
+import os
+import sys
+import time
+import json
+import torch
+import numpy as np
+import threading
+import customtkinter as ctk
+from tkinter import PhotoImage
+from tkinter import simpledialog
+from tkinter import ttk, filedialog
+from tts_engine import SileroTTS
+import sounddevice as sd
+import soundfile as sf
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+from pathlib import Path
+import traceback
+
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+
+    def showtip(self):
+        if self.tip_window:
+            return
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+
+        self.tip_window = ctk.CTkToplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True)
+        self.tip_window.wm_geometry(f"+{x}+{y}")
+
+        label = ctk.CTkLabel(
+            self.tip_window,
+            text=self.text,
+            fg_color="#ffffe0",
+            text_color="#000000",
+            corner_radius=3
+        )
+        label.pack()
+
+    def hidetip(self):
+        if self.tip_window:
+            self.tip_window.destroy()
+        self.tip_window = None
+
+class VoxiomTTSApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        # Add icon setup (put this before other initialization)
+        self._setup_icon()
+        # For Windows .ico
+        self.iconbitmap(os.path.join(os.path.dirname(__file__), 'assets', 'voxiom.ico'))
+
+        # 1. Initialize all methods first
+        self._setup_methods()
+
+        # 2. Initialize attributes
+        self._setup_attributes()
+
+        # Initialize Tkinter variables
+        self.model_var = ctk.StringVar()
+        self.voice_var = ctk.StringVar()
+        self.category_var = ctk.StringVar()
+        self.preset_var = ctk.StringVar()
+        self.status_var = ctk.StringVar(value="Initializing...")
+
+        # 2. Setup core components
+        self._setup_app()
+
+        # Initialize empty lists/dicts first
+        self.available_models = []
+        self._presets = {}
+
+        print("=== Initialization ===")
+        print("1. Creating TTS engine")
+        self._setup_tts()  # This sets up self.tts and verify presets
+
+        print("2. TTS ready:", hasattr(self, 'tts'))
+
+        if hasattr(self, 'tts'):
+            # Initialize presets from TTS engine
+            self.presets = getattr(self.tts, 'presets', {})
+
+            # Verify models
+            self._verify_models()
+            self._verify_presets()
+
+        # Initialize presets with proper file loading
+        self.presets_file = os.path.join(os.path.dirname(__file__), 'presets.json')
+        self._load_presets_file()  # Load presets at startup
+
+        # Initialize presets
+        self._presets = self._load_presets_file()
+
+        print("3. Creating UI")
+        self._create_ui()
+        self._toggle_ssml()
+
+        # 5. Load initial model
+        self._load_initial_model()
+
+        # Cross-platform fallback (add after main window creation)
+        try:
+            self.iconbitmap('assets/voxiom.ico')
+        except:
+            img = tk.PhotoImage(file='assets/voxiom256.png')
+            self.tk.call('wm', 'iconphoto', self._w, img)
+
+        # 6. Debug output (now the method exists)
+        self._debug_state()
+
+        print("4. Loading model")
+        if hasattr(self, 'tts') and hasattr(self.tts, 'supported_models'):
+            if self.tts.supported_models:
+                self._load_model(next(iter(self.tts.supported_models)))
+
+        # Final initialization
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Debug state
+        self._debug_state()
+
+        self.tooltips = []  # Keep references to prevent garbage collection
+        # Initialize SSML controls in hidden state
+        self.ssml_var = ctk.BooleanVar(value=False)
+        self._create_ssml_buttons(self.tts_tab)
+
+        # Load first model if available
+        if self.available_models:
+            self.model_var.set(self.available_models[0])
+            self._load_model(self.available_models[0])
+            self._update_presets_for_model(self.available_models[0])
+
+    @property
+    def presets(self):
+        """Get presets from TTS engine or return empty dict"""
+        if hasattr(self, 'tts') and hasattr(self.tts, 'presets'):
+            return self.tts.presets
+        return self._presets
+
+    @presets.setter
+    def presets(self, value):
+        """Set presets and update UI if available"""
+        self._presets = value or {}
+        if hasattr(self, 'category_menu'):
+            self.category_menu.configure(values=list(self._presets.keys()))
+            if self._presets:
+                self.category_var.set(next(iter(self._presets.keys())))
+                self._update_preset_options()
+
+    def _setup_methods(self):
+        """Ensure all methods exist before they're called"""
+        self._debug_state = self._create_debug_state()
+
+    def _create_debug_state(self):
+        """Factory method to create debug function"""
+        def debug_state():
+            print("\n=== Current Application State ===")
+            print(f"TTS Engine Ready: {hasattr(self, 'tts')}")
+            if hasattr(self, 'tts'):
+                print(f"Loaded Models: {getattr(self.tts, 'models', {}).keys()}")
+                print(f"Current Model: {getattr(self.tts, 'current_model', 'None')}")
+            print(f"Presets Loaded: {len(getattr(self, 'presets', {}))} categories")
+            print(f"UI Components Ready: {hasattr(self, 'voice_menu')}")
+            print("===============================\n")
+        return debug_state
+
+    def _setup_icon(self):
+        """Set up application icon"""
+        try:
+            # For Windows
+            if sys.platform == 'win32':
+                import ctypes
+                # This makes the taskbar icon correct
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Voxiom.TTS.GUI')
+
+            # Load icon file (replace with your actual icon path)
+            icon_path = os.path.join(os.path.dirname(__file__), 'assets', 'voxiom.ico')
+
+            # Try multiple methods for cross-platform compatibility
+            try:
+                self.iconbitmap(icon_path)  # Works best for Windows .ico
+            except:
+                img = PhotoImage(file=icon_path.replace('.ico', '.png'))  # Fallback for other OS
+                self.tk.call('wm', 'iconphoto', self._w, img)
+
+        except Exception as e:
+            print(f"Could not load icon: {e}")
+            # Continue without icon if there's an error
+
+    def _setup_attributes(self):
+        """Initialize all attributes"""
+        self.tooltips = []  # Initialize empty tooltips list
+        self.ssml_buttons = []  # Also initialize SSML buttons list
+
+        # 1. Initialize ALL attributes first
+        self.dark_bg = "#1e1e1e"
+        self.dark_frame = "#2d2d2d"
+        self.dark_text = "#ffffff"
+        self.active_tab_color = "#3a3a3a"
+
+        # Initialize empty containers
+        self._presets = {}  # Directly initialize the backing field for property
+        self.audio_data = None
+        self.playback_start_time = None
+        self.is_playing = False
+        self.available_models = []
+
+        # Initialize variables
+        self.model_var = ctk.StringVar()
+        self.voice_var = ctk.StringVar()
+        self.category_var = ctk.StringVar()
+        self.preset_var = ctk.StringVar()
+        self.status_var = ctk.StringVar(value="Initializing...")
+
+        self.supported_models = {
+            "v3_en": {
+                "file": "v3_en.pt",
+                "sample_rates": [8000, 24000, 48000],
+                "speakers": [f'en_{i}' for i in range(118)],
+                "default_rate": 48000,
+                "language": "en",
+                "supports_ssml": False
+            },
+            "v3_1_ru": {
+                "file": "v3_1_ru.pt",
+                "sample_rates": [8000, 24000, 48000],
+                "speakers": ['aidar', 'baya', 'kseniya', 'xenia', 'eugene'],
+                "default_rate": 48000,
+                "language": "ru",
+                "supports_ssml": False
+            },
+            "v4_ru": {
+                "file": "v4_ru.pt",
+                "sample_rates": [8000, 24000, 48000],
+                "speakers": ['aidar', 'baya', 'kseniya', 'xenia', 'eugene'],
+                "default_rate": 48000,
+                "language": "ru",
+                "supports_ssml": True
+            }
+        }
+
+        self.sample_rate_var = ctk.StringVar(value="48000")  # Add this line
+        self.output_mode = ctk.StringVar(value="stereo")  # "mono" or "stereo"
+        self.synthesis_state = ctk.StringVar(value="ready")  # "ready", "synthesizing", "done"
+        self.progress_value = ctk.DoubleVar(value=0.0)  # Add this line
+        self.playback_pos = ctk.DoubleVar(value=0.0)  # For waveform cursor
+        self.ssml_var = ctk.BooleanVar(value=False)  # Add this line
+
+        self.ssml_buttons = []  # Initialize empty list for SSML buttons
+
+    def _load_presets_file(self):
+        """Load presets from file or create default structure"""
+        try:
+            if os.path.exists(self.presets_file):
+                with open(self.presets_file, 'r', encoding='utf-8') as f:
+                    self.presets = json.load(f)
+            else:
+                self.presets = {
+                    "Russian": {},
+                    "Russian SSML": {},
+                    "English": {}
+                }
+                self._save_presets_to_file()
+        except Exception as e:
+            print(f"Error loading presets: {e}")
+            self.presets = {
+                "Russian": {},
+                "Russian SSML": {},
+                "English": {}
+            }
+
+    def _save_presets_to_file(self):
+        """Save presets to JSON file"""
+        try:
+            with open(self.presets_file, 'w', encoding='utf-8') as f:
+                json.dump(self.presets, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Error saving presets: {e}")
+
+    def _setup_basic_attributes(self):
+        """Initialize all required attributes before TTS setup"""
+        self.dark_bg = "#1e1e1e"
+        self.dark_frame = "#2d2d2d"
+        self.dark_text = "#ffffff"
+        self.active_tab_color = "#3a3a3a"
+
+        # Initialize variables
+        self.model_var = ctk.StringVar()
+        self.voice_var = ctk.StringVar()
+        self.category_var = ctk.StringVar()
+        self.preset_var = ctk.StringVar()
+        self.status_var = ctk.StringVar(value="Initializing...")
+
+        self.supported_models = {
+            "v3_en": {
+                "file": "v3_en.pt",
+                "sample_rates": [8000, 24000, 48000],
+                "speakers": [f'en_{i}' for i in range(118)],
+                "default_rate": 48000
+            },
+            "v3_1_ru": {
+                "file": "v3_1_ru.pt",
+                "sample_rates": [8000, 24000, 48000],
+                "speakers": ['aidar', 'baya', 'kseniya', 'xenia', 'eugene'],
+                "default_rate": 48000
+            },
+            "v4_ru": {
+                "file": "v4_ru.pt",
+                "sample_rates": [8000, 24000, 48000],
+                "speakers": ['aidar', 'baya', 'kseniya', 'xenia', 'eugene'],
+                "default_rate": 48000,
+                "uses_speaker_param": True  # Mark that this model uses 'speaker'
+            }
+        }
+
+        # Initialize other attributes
+        self.audio_data = None
+        self.is_playing = False
+
+    def _verify_presets(self):
+        print("\n=== Presets Verification ===")
+        print(f"Presets path: {os.path.join(os.path.dirname(__file__), 'presets.json')}")
+        print(f"File exists: {os.path.exists(os.path.join(os.path.dirname(__file__), 'presets.json'))}")
+        print(f"Loaded presets: {self.presets}")
+        print("==========================\n")
+
+    def _update_preset_options(self, *args):
+        """Safely update presets dropdown"""
+        try:
+            category = self.category_var.get()
+            if not hasattr(self, 'presets') or category not in self.presets:
+                self.preset_menu.configure(values=[])
+                return
+
+            presets = self.presets[category]
+            preset_names = []
+
+            for name, content in presets.items():
+                if isinstance(content, dict):  # New format
+                    # Only show presets matching current language
+                    if (category == "Russian SSML" and content.get("ssml")) or \
+                       (category == "Russian" and not content.get("ssml") and content.get("language") == "ru") or \
+                       (category == "English" and content.get("language") == "en"):
+                        preset_names.append(name)
+                else:  # Legacy format - include all
+                    preset_names.append(name)
+
+            self.preset_menu.configure(values=preset_names)
+            if preset_names:
+                self.preset_var.set(preset_names[0])
+        except Exception as e:
+            print(f"Preset update error: {e}")
+            self.preset_menu.configure(values=[])
+
+    def _load_preset(self, choice):
+        try:
+            if choice == "Untitled":
+                return  # Don't try to load an untitled preset
+
+            category = self.category_var.get()
+            if not category or not choice or choice == "Untitled":
+                return
+
+            # Get the preset data
+            preset = self.presets[category][choice]
+
+            # Clear and populate text field
+            self.text_input.delete("1.0", "end")
+
+            if isinstance(preset, dict):
+                text = preset["text"]
+                # Auto-wrap in SSML tags if needed
+                if category == "Russian SSML" and not text.startswith("<speak>"):
+                    text = f"<speak>{text}</speak>"
+                self.text_input.insert("1.0", text)
+            else:  # Legacy format
+                self.text_input.insert("1.0", preset)
+
+            # Update SSML button states
+            self._toggle_ssml()
+
+        except Exception as e:
+            if choice != "Untitled":  # Only show errors for real presets
+                self._handle_error(f"Failed to load preset '{choice}'", e)
+
+    def _create_waveform_display(self, parent):
+        """Professional waveform display with TFT grid"""
+        frame = ctk.CTkFrame(parent, height=250, fg_color=self.dark_frame)
+        frame.pack(fill="both", padx=10, pady=10, expand=True)
+
+        self.fig = Figure(figsize=(10, 3), dpi=100, facecolor=self.dark_frame)
+        self.ax = self.fig.add_subplot(111, facecolor=self.dark_frame)
+
+        # Professional styling
+        self.ax.grid(True, color='#333333', linestyle='--', alpha=0.5)
+        self.ax.set_ylim(-1.1, 1.1)
+        self.ax.set_yticks(np.arange(-1, 1.1, 0.5))
+        self.ax.tick_params(colors='white', which='both')
+
+        # Initial empty plot
+        self.line, = self.ax.plot([], [], color='#4CAF50', linewidth=1)
+        self.cursor_line = self.ax.axvline(x=0, color='red', linewidth=1.5, alpha=0)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=frame)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _setup_app(self):
+        """Configure main window with fixed height"""
+        self.title("Voxiom TTS GUI")
+        self.geometry("1000x800")  # More reasonable default size
+        self.minsize(800, 600)    # Minimum size that works well
+        self.configure(fg_color=self.dark_bg)
+
+        # Add this for better taskbar integration (Windows)
+        if sys.platform == 'win32':
+            try:
+                from ctypes import windll
+                windll.shell32.SetCurrentProcessExplicitAppUserModelID('Voxiom.TTS.GUI.1.0')
+            except:
+                pass
+
+        # Make text input area resize properly
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+    def _setup_tts(self):
+        """Initialize TTS engine with status updates"""
+        self.status_var.set("Setting up TTS engine...")
+        self.update()
+
+        self.models_dir = os.path.join("models", "tts")
+        os.makedirs(self.models_dir, exist_ok=True)
+
+        """Initialize TTS engine with error handling"""
+        try:
+            self.models_dir = os.path.join("models", "tts")
+            os.makedirs(self.models_dir, exist_ok=True)
+            self.tts = SileroTTS(self.models_dir)
+            self.status_var.set("TTS engine ready")
+        except Exception as e:
+            self.status_var.set(f"TTS init failed: {str(e)}")
+            print(f"TTS initialization error: {traceback.format_exc()}")
+            # Create a dummy TTS object with minimal functionality
+            self.tts = type('DummyTTS', (), {
+                'presets': {"Error": {"default": "TTS engine failed to initialize"}},
+                'supported_models': {},
+                'load_model': lambda *args: False,
+                'get_voices': lambda: []
+            })()
+
+    def _update_model_ui(self, model_name: str):
+        """Update all UI elements based on selected model"""
+        try:
+            # Update model dropdown
+            self.model_var.set(model_name)
+
+            # Load the model first
+            if not self.tts.load_model(model_name):
+                raise RuntimeError("Model loading failed")
+
+            # Get voices for the loaded model
+            voices = self.tts.get_voices()
+
+            # Add these debug prints
+            print("\n=== Voice Loading Debug ===")
+            print(f"Loaded voices for {model_name}: {voices}")
+            print(f"Voice menu exists: {hasattr(self, 'voice_menu')}")
+            print("==========================\n")
+
+            # Update voice menu if it exists
+            if hasattr(self, 'voice_menu'):
+                self.voice_menu.configure(values=voices)
+                if voices:
+                    self.voice_var.set(voices[0])
+                    self._update_presets_for_language(voices[0].split('_')[0])
+
+        except Exception as e:
+            print(f"UI update error: {e}")
+            self.status_var.set(f"UI update failed: {str(e)}")
+
+    def _update_presets_for_language(self, language: str):
+        """Filter presets based on language"""
+        if not hasattr(self, 'tts') or not hasattr(self.tts, 'presets'):
+            return
+
+        available_presets = []
+        for category, presets in self.tts.presets.items():
+            # Check for language-specific or default preset
+            if language in presets or 'default' in presets:
+                available_presets.append(category)
+
+        # Update UI if components exist
+        if hasattr(self, 'category_menu'):
+            self.category_menu.configure(values=available_presets)
+            if available_presets:
+                self.category_var.set(available_presets[0])
+                self._update_preset_options()
+
+    def _create_voice_controls(self):
+        """Create voice selection controls"""
+        voice_frame = ctk.CTkFrame(self.tts_tab)
+        voice_frame.pack(fill="x", padx=10, pady=5)
+
+        ctk.CTkLabel(voice_frame, text="Voice:").pack(side="left")
+        self.voice_var = ctk.StringVar()
+
+        # Now create voice_menu properly
+        self.voice_menu = ctk.CTkOptionMenu(
+            voice_frame,
+            variable=self.voice_var,
+            values=["Select model first"],
+            width=200
+        )
+        self.voice_menu.pack(side="left", padx=5)
+
+    def _preview_voice(self):
+        """Play voice preview sample"""
+        if not hasattr(self, 'voice_var') or not self.voice_var.get():
+            return
+
+        sample_text = "This is a voice preview"
+        threading.Thread(
+            target=lambda: self._generate_and_play(sample_text),
+            daemon=True
+        ).start()
+
+    def _update_voices(self, *args):
+        """Update voice list when language changes"""
+        language = self.language_var.get()
+        voices = self.tts.get_voices(language)
+        self.voice_menu.configure(values=voices)
+        if voices:
+            self.voice_var.set(voices[0])
+
+    def _verify_model(self, model_path: str) -> bool:
+        """Check if model file is valid"""
+        try:
+            torch.load(model_path, map_location='cpu')
+            return True
+        except:
+            return False
+
+    def _verify_models(self):
+        """Check which models are available and valid"""
+        if not hasattr(self, 'tts') or not hasattr(self.tts, 'supported_models'):
+            self.available_models = []
+            return
+
+        self.available_models = []
+        for model_name, config in self.tts.supported_models.items():  # Access via tts
+            model_path = os.path.join(self.models_dir, config["file"])
+            if os.path.exists(model_path):
+                self.available_models.append(model_name)
+
+        if not self.available_models:
+            self.status_var.set("No valid models found. Please download models.")
+        else:
+            self.status_var.set(f"Found {len(self.available_models)} models")
+
+        """Show friendly warning if models are missing"""
+        missing = []
+        for model in self.supported_models:
+            if not os.path.exists(f"models/tts/{model}.pt"):
+                missing.append(model)
+
+        if missing:
+            show_warning_dialog(
+                title="Models Missing",
+                message=f"Download these models: {', '.join(missing)}"
+            )
+
+    def _verify_model_files(self):
+        """Check if model files exist and are valid"""
+        missing = []
+        for name, file in self.supported_models.items():
+            path = os.path.join(self.models_dir, file)
+            if not os.path.exists(path):
+                missing.append(file)
+
+        if missing:
+            self.status_var.set(f"Missing model files: {', '.join(missing)}")
+
+    def _setup_dark_theme(self):
+        """Configure dark theme"""
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
+        plt.style.use('dark_background')
+
+        self.style = ttk.Style()
+        self.style.theme_use('default')
+        self.style.configure('TNotebook', background=self.dark_bg)
+        self.style.configure('TNotebook.Tab',
+                           background=self.dark_bg,
+                           foreground=self.dark_text,
+                           padding=[10, 5],
+                            font=('Arial', 10, 'bold'))
+        self.style.map('TNotebook.Tab',
+                     background=[('selected', self.active_tab_color)],
+                     foreground=[('selected', '#4CAF50')])  # Active tab white text
+
+    def _create_ui(self):
+        """Create all UI components"""
+        self._setup_dark_theme()
+        self._create_notebook()
+        self._create_tts_tab()
+        self._create_settings_tab()
+        self._create_status_bar()  # Now status_var exists when this is called
+
+            # Initialize with first model if available
+        if hasattr(self, 'tts') and self.available_models:
+            self._update_model_ui(self.available_models[0])
+
+    def _on_model_selected(self, event=None):
+        """Handle model selection with full preset refresh"""
+        try:
+            model_name = self.model_var.get()
+            if not model_name:
+                return
+
+            # Load model
+            if not self.tts.load_model(model_name):
+                raise RuntimeError("Model loading failed")
+
+            # Update voices
+            voices = self.tts.get_voices() or ["No voices available"]
+            self.voice_menu.configure(values=voices)
+            if voices:
+                self.voice_var.set(voices[0])
+
+            # Refresh presets for this model
+            self._update_presets_for_model(model_name)
+
+            # Reset UI state
+            self.text_input.delete("1.0", "end")
+            self.preset_var.set("")
+            self._update_preset_options()  # Force refresh dropdown
+            self._toggle_ssml()
+
+            self.status_var.set(f"Model loaded: {model_name}")
+
+        except Exception as e:
+            self._handle_error("Model change failed", e)
+
+    def is_ssml(text: str) -> bool:
+        """Check if text contains SSML tags"""
+        text = text.lower().strip()
+        return any(tag in text for tag in ['<speak>', '<prosody', '<break', '<say-as'])
+
+    def _debug_model_change(self, model_name):
+        print(f"\n=== Model Change Debug: {model_name} ===")
+        print(f"Current model: {self.tts.current_model}")
+        print(f"Available voices: {self.tts.get_voices()}")
+        print(f"Sample rates: {self.tts.supported_models[model_name]['sample_rates']}")
+        print("Preset categories:", [
+            cat for cat in self.tts.presets
+            if any(k in self.tts.presets[cat] for k in ['default', model_name.split('_')[0]])
+        ])
+        print("==============================\n")
+
+    def _on_voice_selected(self, choice):
+        """Handle voice selection change"""
+        language = choice.split('_')[0]
+        self._update_presets_for_language(language)
+        self._toggle_ssml()
+
+    def _load_first_preset(self):
+        """Load the first preset if presets exist"""
+        if hasattr(self, 'presets') and self.presets:
+            first_preset = next(iter(self.presets))
+            self._load_preset(first_preset)
+
+    def _on_text_modified(self, event=None):
+        """Handle text changes by updating preset state"""
+        if not hasattr(self, 'preset_var') or not hasattr(self, 'text_input'):
+            return
+
+        current_text = self.text_input.get("1.0", "end-1c").strip()
+
+        if current_text:
+            # Only set to Untitled if we're not already loading a preset
+            if not self.preset_var.get():
+                self.preset_var.set("Untitled")
+                self._update_preset_options()
+        else:
+            self.preset_var.set("")
+
+        # Update SSML button states
+        self._toggle_ssml()
+
+    def _fix_numpy_warning(self):
+        """Safe numpy compatibility fix"""
+        try:
+            import numpy as np
+            if not hasattr(np, '_ARRAY_API'):
+                np._ARRAY_API = None
+        except Exception as e:
+            print(f"Numpy warning fix failed: {e}")
+
+    def _update_waveform(self, audio_data):
+        try:
+            self.ax.clear()
+
+            # Update grid and styling
+            self.ax.grid(True, color='#333333', linestyle='--', alpha=0.5)
+            self.ax.set_ylim(-1.1, 1.1)
+
+            # Plot waveform
+            if len(audio_data.shape) == 1:
+                self.line, = self.ax.plot(audio_data, color='#4CAF50')
+            else:
+                self.line, = self.ax.plot(audio_data[:,0], color='#4CAF50')  # Left channel
+
+            # Add level indicators
+            self.ax.axhline(y=0, color='white', alpha=0.3)
+            self.ax.axhline(y=0.5, color='#FF9800', alpha=0.2, linestyle=':')
+            self.ax.axhline(y=-0.5, color='#FF9800', alpha=0.2, linestyle=':')
+
+            # In _update_waveform():
+            rms = np.sqrt(np.mean(audio_data**2))
+            self.ax.fill_betweenx(
+                [-1.1, -1.1 + rms*2.2],
+                0, len(audio_data),
+                color='#4CAF50',
+                alpha=0.1
+            )
+
+            self.canvas.draw()
+
+        except Exception as e:
+            print(f"Waveform update error: {e}")
+
+    def _handle_error(self, context_message, error):
+        """Centralized error handling with logging"""
+        error_msg = f"{context_message}: {str(error)}"
+
+        # User-friendly message
+        self.status_var.set(error_msg)
+
+        # Detailed logging
+        error_details = traceback.format_exc()
+        print(f"ERROR: {error_msg}\n{error_details}")
+
+        # Optional: Log to file
+        with open("error_log.txt", "a") as f:
+            f.write(f"[{time.ctime()}] {error_msg}\n{error_details}\n\n")
+
+    def _thread_safe_error(self, message):
+        """Show error message in main thread"""
+        self.after(0, lambda: self.status_var.set(message))
+
+    def _validate_ssml(self, text: str) -> bool:
+        """Basic SSML validation"""
+        text = text.strip()
+        if not text.startswith("<speak>") or not text.endswith("</speak>"):
+            return False
+        # Add more validation as needed
+        return True
+
+    def _validate_sample_rate(self, model_info):
+        """Validate and return proper sample rate with multiple fallbacks"""
+        try:
+            # 1. Try to use user-selected rate if valid
+            user_rate = int(self.sample_rate_var.get())
+            if user_rate in model_info.get("sample_rates", []):
+                return user_rate
+
+            # 2. Fallback to model's default rate
+            if "default_rate" in model_info:
+                self.sample_rate_var.set(str(model_info["default_rate"]))
+                return model_info["default_rate"]
+
+            # 3. Ultimate fallback to 48000
+            self.sample_rate_var.set("48000")
+            return 48000
+
+        except (ValueError, AttributeError):
+            # If all else fails
+            self.sample_rate_var.set("48000")
+            return 48000
+
+    def _synthesize(self):
+        if self.synthesis_state.get() == "synthesizing":
+            return
+
+        text = self.text_input.get("1.0", "end-1c").strip()
+        if not text:
+            self.status_var.set("Error: No text to synthesize")
+            return
+
+        self.synthesis_state.set("synthesizing")
+        self.play_btn.configure(state="disabled")
+        self.status_var.set("Synthesizing...")
+
+        threading.Thread(target=self._run_synthesis, args=(text,), daemon=True).start()
+
+    def _run_synthesis(self, text):
+        try:
+            # Generate audio
+            audio = self.tts.speak(
+                text=text,
+                speaker=self.voice_var.get(),
+                ssml=self.ssml_var.get() if self.model_var.get() == "v4_ru" else False
+            )
+
+            # Convert to numpy and handle mono/stereo
+            audio_np = audio.numpy()
+
+            # Handle mono output
+            if self.output_mode.get() == "mono":
+                if len(audio_np.shape) == 2:  # If stereo, convert to mono
+                    audio_np = np.mean(audio_np, axis=1)
+                # Ensure it's 1D array for mono
+                audio_np = audio_np.squeeze()
+            else:  # Stereo output
+                if len(audio_np.shape) == 1:  # If mono, convert to stereo
+                    audio_np = np.column_stack((audio_np, audio_np))
+                elif audio_np.shape[1] == 1:  # Single channel 2D array
+                    audio_np = np.column_stack((audio_np[:,0], audio_np[:,0]))
+
+            # Normalize with headroom
+            max_amp = np.max(np.abs(audio_np))
+            if max_amp > 0:
+                audio_np = audio_np / (max_amp * 1.05)  # 5% headroom
+
+            # Add 50ms pre-silence (match output format)
+            silence_samples = int(0.05 * 48000)
+            if self.output_mode.get() == "mono":
+                pre_silence = np.zeros(silence_samples)
+            else:
+                pre_silence = np.zeros((silence_samples, 2))
+
+            self.audio_data = np.concatenate((pre_silence, audio_np))
+
+            self.after(0, self._on_synthesis_complete)
+
+        except Exception as e:
+            self.after(0, lambda: self._handle_error("Synthesis failed", e))
+
+    def _on_synthesis_complete(self):
+        if not hasattr(self, 'audio_data') or self.audio_data is None:
+            self.status_var.set("Error: No audio generated")
+            return
+
+        self._update_waveform(self.audio_data)
+        self.synthesis_state.set("done")
+        self.play_btn.configure(state="normal")
+        self.status_var.set("Ready to play")
+
+        # Initialize playback variables
+        if not hasattr(self, 'playback_start_time'):
+            self.playback_start_time = None
+
+    def _verify_audio_shape(self, audio):
+        """Ensure audio is proper format based on output mode"""
+        if self.output_mode.get() == "mono":
+            if len(audio.shape) == 2:  # Convert stereo to mono
+                return np.mean(audio, axis=1)
+            return audio.squeeze()  # Ensure 1D array
+        else:  # Stereo
+            if len(audio.shape) == 1:  # Convert mono to stereo
+                return np.column_stack((audio, audio))
+            elif audio.shape[1] == 1:  # Single channel 2D array
+                return np.column_stack((audio[:,0], audio[:,0]))
+            return audio
+
+    def _play_audio(self):
+        if not hasattr(self, 'audio_data') or self.audio_data is None:
+            self.status_var.set("Error: No audio to play")
+            return
+
+        if self.is_playing:
+            sd.stop()
+            self.is_playing = False
+            self.play_btn.configure(text="в–¶ Play")
+            return
+
+        try:
+            # Convert to consistent format (stereo)
+            if len(self.audio_data.shape) == 1:  # Mono
+                audio_to_play = np.column_stack((self.audio_data, self.audio_data))
+            else:  # Stereo
+                audio_to_play = self.audio_data
+
+            # Create matching silence buffer
+            silence = np.zeros((int(0.1 * 48000), 2))  # Stereo silence
+
+            # Safe concatenation
+            padded_audio = np.vstack([
+                audio_to_play,
+                silence
+            ])
+
+            # Start playback
+            self.playback_start_time = time.time()
+            self.is_playing = True
+            self.play_btn.configure(text="вЏ№ Stop")
+
+            sd.play(padded_audio, 48000, blocking=False)
+            self._animate_playback_cursor()
+
+        except Exception as e:
+            self._handle_error("Playback failed", e)
+            self.is_playing = False
+            self.play_btn.configure(text="в–¶ Play")
+
+    def _animate_playback_cursor(self):
+        if not hasattr(self, 'playback_start_time') or not self.is_playing:
+            return
+
+        try:
+            current_time = time.time() - self.playback_start_time
+            duration = len(self.audio_data) / 48000
+            progress = min(1.0, current_time / duration)
+
+            self._draw_playback_cursor(progress)
+
+            if progress < 1.0 and self.is_playing:
+                self.after(20, self._animate_playback_cursor)
+            else:
+                self.is_playing = False
+                self.play_btn.configure(text="в–¶ Play")
+        except Exception as e:
+            print(f"Cursor animation error: {e}")
+            self.is_playing = False
+
+    def _draw_playback_cursor(self, position):
+        """Maintain single cursor line"""
+        if not hasattr(self, 'ax'):
+            return
+
+        # Remove previous cursor
+        if hasattr(self, 'cursor_line'):
+            self.cursor_line.remove()
+
+        # Draw new cursor
+        if hasattr(self, 'line') and len(self.line.get_xdata()) > 0:
+            x_pos = position * len(self.line.get_xdata())
+            self.cursor_line = self.ax.axvline(
+                x=x_pos,
+                color='#FF5252',
+                linewidth=1.5,
+                alpha=0.8
+            )
+            self.canvas.draw_idle()
+
+    def _generate_and_play(self, text):
+        try:
+            # Initial state - yellow "preparing" state
+            self.progress_value.set(0)
+            self.progress.configure(progress_color="yellow")
+            self.status_var.set("Preparing synthesis...")
+            self.update_idletasks()
+
+            # Validate input
+            text = text.strip()
+            if not text:
+                self.status_var.set("Error: No text to synthesize")
+                return
+
+            # Check SSML validity
+            current_model = self.model_var.get()
+            use_ssml = self.ssml_var.get() if current_model == "v4_ru" else False
+
+            if use_ssml and not text.startswith("<speak>"):
+                text = f"<speak>{text}</speak>"
+
+            # Synthesis phase - yellow progress
+            self.status_var.set("Synthesizing...")
+            self.progress_value.set(0.1)
+            self.update_idletasks()
+
+            # Generate audio
+            audio = self.tts.speak(
+                text=text,
+                speaker=self.voice_var.get(),
+                ssml=use_ssml
+            )
+
+            # Processing phase - orange progress
+            self.progress_value.set(0.5)
+            self.progress.configure(progress_color="orange")
+            self.status_var.set("Processing audio...")
+            self.update_idletasks()
+
+            audio_np = audio.numpy()
+            max_amp = np.max(np.abs(audio_np))
+            if max_amp > 0:
+                audio_np = audio_np / max_amp
+            self.audio_data = audio_np
+            self._update_waveform(audio_np)
+
+            # Playback phase - green animated progress
+            self.progress_value.set(0.8)
+            self.play_btn.configure(text="вЏ№ Stop", fg_color="#FF5252", state="normal")
+            self.progress.configure(progress_color="#4CAF50")
+            self.status_var.set("Playing audio...")
+            self.update_idletasks()
+
+            # Animation during playback
+            def update_progress():
+                duration = len(audio_np) / 48000  # Approximate duration in seconds
+                step = 0.01 / duration  # Small step for smooth animation
+
+                while self.is_playing and self.progress_value.get() < 1.0:
+                    self.progress_value.set(self.progress_value.get() + step)
+                    self.update_idletasks()
+                    time.sleep(0.01)
+
+            self.is_playing = True
+            threading.Thread(target=update_progress, daemon=True).start()
+
+            sd.play(audio_np, 48000)
+            sd.wait()
+
+            # Completion
+            self.progress_value.set(1.0)
+            self.status_var.set("Playback complete")
+
+        except Exception as e:
+            self._handle_error("Synthesis failed", e)
+        finally:
+            self.is_playing = False
+            self.progress.configure(progress_color="#4CAF50")  # Reset to green
+            self.play_btn.configure(text="в–¶ Synthesize & Play", state="normal")
+
+    def _toggle_ssml(self):
+        """Update SSML buttons state based on current model and text"""
+        model_name = self.model_var.get()
+        category = self.category_var.get()
+        current_text = self.text_input.get("1.0", "end-1c").strip()
+
+        # Enable only for v4_ru in Russian SSML mode with text
+        ssml_enabled = (model_name == "v4_ru" and
+                       category == "Russian SSML" and
+                       current_text)
+
+        for btn in self.ssml_buttons:
+            btn.configure(state="normal" if ssml_enabled else "disabled")
+
+    def _safe_waveform_update(self, audio_data):
+        """Thread-safe waveform update"""
+        try:
+            self._update_waveform(audio_data)
+        except Exception as e:
+            print(f"Waveform update failed: {e}")
+
+    def _create_notebook(self):
+        """Create just the notebook widget without tabs"""
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def _create_tts_tab(self):
+        self.tts_tab = ctk.CTkFrame(self.notebook, fg_color=self.dark_frame)
+        self.notebook.add(self.tts_tab, text="TTS Generation")
+
+        main_frame = ctk.CTkFrame(self.tts_tab)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Top controls frame
+        top_frame = ctk.CTkFrame(main_frame)
+        top_frame.pack(fill="x", pady=(0, 5))
+
+        # Model selection
+        # model_row = ctk.CTkFrame(top_frame)
+        # model_row.pack(fill="x", pady=(0, 5))
+
+        # ctk.CTkLabel(model_row, text="Model:").pack(side="left")
+        # self.model_menu = ctk.CTkOptionMenu(
+        #     model_row,
+        #     variable=self.model_var,
+        #     values=list(self.supported_models.keys()),
+        #     command=self._on_model_selected,
+        #     width=150
+        # )
+        # self.model_menu.pack(side="left", padx=5)
+
+        # Category/Preset/Voice row
+        controls_row = ctk.CTkFrame(top_frame)
+        controls_row.pack(fill="x", pady=(0, 5))
+
+        # Update category label to be more descriptive
+        # In _create_tts_tab(), update the category menu creation:
+        ctk.CTkLabel(controls_row, text="Language Mode:").pack(side="left")  # Changed label
+        self.category_menu = ctk.CTkOptionMenu(
+            controls_row,
+            variable=self.category_var,
+            values=["Russian", "Russian SSML", "English"],  # Reordered for clarity
+            width=150,
+            command=lambda _: self._toggle_ssml()  # Update SSML state when category changes
+        )
+        self.category_menu.pack(side="left", padx=5)
+
+        ctk.CTkLabel(controls_row, text="Preset:").pack(side="left")
+        self.preset_menu = ctk.CTkOptionMenu(
+            controls_row,
+            variable=self.preset_var,
+            values=[],
+            width=200,
+            command=self._load_preset
+        )
+        self.preset_menu.pack(side="left", padx=5)
+
+        # Add Save Preset button
+        ctk.CTkButton(
+            controls_row,
+            text="рџ’ѕ Save Preset",
+            command=self._save_preset,
+            width=100
+        ).pack(side="left", padx=5)
+
+        ctk.CTkLabel(controls_row, text="Voice:").pack(side="left")
+        self.voice_menu = ctk.CTkOptionMenu(
+            controls_row,
+            variable=self.voice_var,
+            values=["Select model first"],
+            width=150,
+            command=self._on_voice_selected
+        )
+        self.voice_menu.pack(side="left", padx=5)
+
+        # SSML controls row (always visible but disabled when not v4_ru)
+        self.ssml_frame = ctk.CTkFrame(top_frame)
+        self.ssml_frame.pack(fill="x", pady=(0, 5))
+
+        # SSML buttons (always visible)
+        ssml_tags = [
+            ("speak", "Speak", "Wraps text in SSML"),
+            ("prosody", "Prosody", "Adjust speed"),
+            ("break", "Pause", "Add pause"),
+            ("sayas", "Say-As", "Pronunciation"),
+            ("p", "Paragraph", "Paragraph"),
+            ("s", "Sentence", "Sentence")
+        ]
+
+        for tag, label, tip in ssml_tags:
+            btn = ctk.CTkButton(
+                self.ssml_frame,
+                text=label,
+                command=lambda t=tag: self._insert_ssml_tag(t),
+                width=80
+            )
+            btn.pack(side="left", padx=2)
+            self._create_button_tooltip(btn, tip)
+
+        # Text input with preset tracking
+        self.text_input = ctk.CTkTextbox(
+            main_frame,
+            wrap="word",
+            height=250,
+            font=("Arial", 14),
+            fg_color="#2d2d2d"
+        )
+        self.text_input.pack(fill="x", pady=(5, 5))
+        self.text_input.bind("<KeyRelease>", self._on_text_modified)  # Add this binding
+
+        # Bottom controls
+        bottom_frame = ctk.CTkFrame(main_frame)
+        bottom_frame.pack(fill="x", pady=(5, 0))
+
+        ctk.CTkLabel(bottom_frame, text="Sample Rate:").pack(side="left")
+        self.sample_rate_menu = ctk.CTkOptionMenu(
+            bottom_frame,
+            variable=self.sample_rate_var,
+            values=["48000", "24000", "8000"],
+            width=100
+        )
+        self.sample_rate_menu.pack(side="left", padx=5)
+
+        # Audio Output Settings
+        # output_frame = ctk.CTkFrame(main_frame)
+        # output_frame.pack(fill="x", padx=5, pady=5)
+
+        ctk.CTkLabel(bottom_frame, text="Output Mode:").pack(side="left")
+        ctk.CTkOptionMenu(
+            bottom_frame,
+            variable=self.output_mode,
+            values=["mono", "stereo"],
+            width=100
+        ).pack(side="left", padx=5)
+
+        # self.progress = ctk.CTkProgressBar(
+        #     bottom_frame,
+        #     mode="determinate",
+        #     variable=self.progress_value,
+        #     height=10
+        # )
+        # self.progress.pack(side="left", fill="x", expand=True, padx=5)
+
+        # Replace progress bar with state indicator
+        self.state_indicator = ctk.CTkLabel(
+            bottom_frame,
+            textvariable=self.synthesis_state,
+            width=150,
+            fg_color="#2d2d2d"
+        )
+        self.state_indicator.pack(side="left", padx=5)
+
+        # Add separate buttons
+        self.synth_btn = ctk.CTkButton(
+            bottom_frame,
+            text="вљЎ Synthesize",
+            command=self._synthesize,
+            width=100
+        )
+        self.synth_btn.pack(side="left", padx=5)
+
+        self.play_btn = ctk.CTkButton(
+            bottom_frame,
+            text="в–¶ Play",
+            command=self._play_audio,
+            width=100,
+            state="disabled"
+        )
+        self.play_btn.pack(side="left", padx=5)
+
+        # self.play_btn = ctk.CTkButton(
+        #     bottom_frame,
+        #     text="в–¶ Synthesize & Play",
+        #     command=self._smart_play,
+        #     fg_color="#4CAF50",
+        #     width=150
+        # )
+        # self.play_btn.pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            bottom_frame,
+            text="рџ’ѕ Export WAV",
+            command=self._export_audio,
+            width=100
+        ).pack(side="left")
+
+        # Waveform display
+        self._create_waveform_display(main_frame)
+
+    def _get_safe_categories(self):
+        """Ensure we always return a valid categories list"""
+        if hasattr(self, 'tts') and hasattr(self.tts, 'presets'):
+            return list(self.tts.presets.keys())
+        return ["General"]  # Fallback default
+
+    def _insert_ssml_tag(self, tag_type):
+        cursor_pos = self.text_input.index("insert")
+
+        tags = {
+            "speak": ('<speak>', '</speak>'),
+            "prosody": '<prosody rate="medium" pitch="medium">',
+            "break": '<break time="500ms"/>',
+            "sayas": '<say-as interpret-as="characters">',
+            "p": ('<p>','</p>'),
+            "s": ('<s>','</s>')
+        }
+
+        if tag_type == "speak":
+            current_text = self.text_input.get("1.0", "end-1c")
+            if "<speak>" not in current_text:
+                self.text_input.insert("1.0", tags["speak"][0])
+                self.text_input.insert("end", tags["speak"][1])
+        else:
+            self.text_input.insert(cursor_pos, tags[tag_type])
+
+        self.text_input.focus_set()
+
+    def _create_ssml_buttons(self, parent_frame):
+        """Create SSML control buttons with tooltips"""
+        # Create the frame here instead of in _create_tts_tab
+        self.ssml_frame = ctk.CTkFrame(parent_frame)
+        self.ssml_frame.pack_forget()  # Start hidden
+
+        # self.ssml_indicator = ctk.CTkLabel(
+        #     self.ssml_frame,
+        #     text="SSML: N/A",
+        #     fg_color="gray",
+        #     corner_radius=5,
+        #     width=80
+        # )
+        # self.ssml_indicator.pack(side="left", padx=5)
+
+        # SSML Buttons
+        ssml_tags = [
+            ("speak", "Speak", "Wraps text in SSML"),
+            ("prosody", "Prosody", "Adjust speed"),
+            ("break", "Pause", "Add pause"),
+            ("sayas", "Say-As", "Pronunciation"),
+            ("p", "Paragraph", "Paragraph"),
+            ("s", "Sentence", "Sentence Equivalent")
+        ]
+
+        for tag, label, tip in ssml_tags:
+            btn = ctk.CTkButton(
+                self.ssml_frame,  # Changed from parent_frame to self.ssml_frame
+                text=label,
+                command=lambda t=tag: self._insert_ssml_tag(t),
+                width=80
+            )
+            btn.pack(side="left", padx=2)
+            self._create_button_tooltip(btn, tip)
+
+    def _create_button_tooltip(self, button, text):
+        """Create a visible tooltip"""
+        tooltip = ctk.CTkToplevel(self)
+        tooltip.wm_overrideredirect(True)
+        tooltip.wm_geometry("+10000+10000")  # Start off-screen
+        tooltip.lift()
+
+        label = ctk.CTkLabel(
+            tooltip,
+            text=text,
+            fg_color="#333333",
+            text_color="#ffffff",
+            corner_radius=5,
+            padx=10,
+            pady=5
+        )
+        label.pack()
+
+        # Store references
+        self.tooltips.append(tooltip)
+
+        # Bind events
+        button.bind("<Enter>", lambda e, t=tooltip, b=button: self._show_tooltip(t, b))
+        button.bind("<Leave>", lambda e, t=tooltip: t.wm_geometry("+10000+10000"))
+        button.bind("<ButtonPress>", lambda e, t=tooltip: t.wm_geometry("+10000+10000"))
+
+    def _show_tooltip(self, tooltip, button):
+        """Position tooltip near cursor"""
+        x = button.winfo_rootx() + 20
+        y = button.winfo_rooty() + button.winfo_height() + 5
+        tooltip.wm_geometry(f"+{x}+{y}")
+        tooltip.lift()
+
+    def _create_settings_tab(self):
+        self.settings_tab = ctk.CTkFrame(self.notebook, fg_color=self.dark_frame)
+        self.notebook.add(self.settings_tab, text="Settings")
+
+        main_frame = ctk.CTkFrame(self.settings_tab)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Model Management only
+        model_frame = ctk.CTkFrame(main_frame)
+        model_frame.pack(fill="x", padx=5, pady=5)
+
+        ctk.CTkLabel(model_frame, text="Model Management",
+                    font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 10))
+
+        model_row = ctk.CTkFrame(model_frame)
+        model_row.pack(fill="x", pady=5)
+
+        ctk.CTkLabel(model_row, text="Model:").pack(side="left")
+        self.model_menu = ctk.CTkOptionMenu(
+            model_row,
+            variable=self.model_var,
+            values=list(self.supported_models.keys()),
+            command=self._on_model_selected
+        )
+        self.model_menu.pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            model_frame,
+            text="рџ”„ Update Model",
+            command=self._update_model,
+            fg_color="#FF9800"
+        ).pack(fill="x", pady=5)
+
+        # Credits section
+        credits_frame = ctk.CTkFrame(main_frame)
+        credits_frame.pack(fill="x", padx=5, pady=5)
+
+        ctk.CTkLabel(credits_frame, text="Credits",
+                    font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 10))
+
+        ctk.CTkLabel(
+            credits_frame,
+            text="вЂў Voxiom TTS GUI for Silero TTS Models\nвЂў CustomTkinter UI\nвЂў Developed by Voxiom TTS",
+            justify="left"
+        ).pack(anchor="w")
+
+    def _save_preset(self):
+        try:
+            category = self.category_var.get()
+            text = self.text_input.get("1.0", "end-1c").strip()
+
+            if not text:
+                self.status_var.set("Error: No text to save")
+                return
+
+            # Get preset name
+            preset_name = self.preset_var.get()
+            if preset_name == "Untitled" or not preset_name:
+                preset_name = simpledialog.askstring(
+                    "Save Preset",
+                    "Enter preset name:",
+                    parent=self,
+                    initialvalue="New Preset"
+                )
+                if not preset_name:
+                    return
+
+            # Save the preset
+            self.presets.setdefault(category, {})[preset_name] = {
+                "text": text,
+                "ssml": category == "Russian SSML",
+                "language": "ru" if "Russian" in category else "en",
+                "timestamp": time.strftime("%Y-%m-%d %H:%M")
+            }
+
+            # Save to file and update UI
+            self._save_presets_to_file()
+            self.preset_var.set(preset_name)
+            self._update_preset_options()
+            self.status_var.set(f"вњ… Preset saved: {preset_name}")
+
+        except Exception as e:
+            self._handle_error("Preset save failed", e)
+
+    # def _update_ssml_indicator(self):
+    #     category = self.category_var.get()
+    #     if category == "Russian SSML":
+    #         self.ssml_indicator.configure(
+    #             fg_color="#4CAF50",
+    #             text="SSML: ON"
+    #         )
+    #     else:
+    #         self.ssml_indicator.configure(
+    #             fg_color="red",
+    #             text="SSML: OFF"
+    #         )
+
+    def _create_status_bar(self):
+        self.status_var = ctk.StringVar(value="Ready")
+        ctk.CTkLabel(
+            self,
+            textvariable=self.status_var,
+            anchor="w",
+            font=("Arial", 10)
+        ).pack(fill="x", padx=10, pady=(0,10))
+
+    def _load_initial_model(self):
+        """Load first available supported model"""
+        if self.available_models:
+            self.model_var.set(self.available_models[0])
+            self._load_model(self.available_models[0])
+        else:
+            self.status_var.set("Please download models first")
+
+    def _load_model(self, model_name: str) -> bool:
+        try:
+            if not hasattr(self, 'tts'):
+                raise ValueError("TTS engine not initialized")
+
+            if not hasattr(self.tts, 'supported_models'):
+                raise ValueError("No model configurations available")
+
+            if model_name not in self.tts.supported_models:
+                raise ValueError(f"Model {model_name} not supported")
+
+            # Actually load the model in the TTS engine
+            if not self.tts.load_model(model_name):
+                raise RuntimeError("Model loading failed")
+
+            # Update UI elements
+            voices = self.tts.get_voices()
+            if hasattr(self, 'voice_menu'):
+                self.voice_menu.configure(values=voices)
+                if voices:
+                    self.voice_var.set(voices[0])
+
+            # Update model dropdown
+            self.model_var.set(model_name)
+
+            # Update presets by model
+            self._update_presets_for_model(model_name)
+
+            # Update SSML indicator based on model
+            self._toggle_ssml()
+
+            self.status_var.set(f"Loaded: {model_name}")
+            return True
+
+        except Exception as e:
+            self._handle_error("Model loading error", e)
+            return False
+
+    def _update_presets_for_model(self, model_name: str):
+        """Update available categories based on model with proper Russian handling"""
+        model_info = self.supported_models.get(model_name, {})
+        language = model_info.get("language", "")
+        supports_ssml = model_info.get("supports_ssml", False)
+
+        # Determine available categories
+        if model_name == "v4_ru":
+            categories = ["Russian SSML", "Russian"]
+        elif model_name == "v3_1_ru":
+            categories = ["Russian"]
+        elif model_name == "v3_en":
+            categories = ["English"]
+        else:
+            categories = []
+
+        # Update UI
+        if hasattr(self, 'category_menu'):
+            self.category_menu.configure(values=categories)
+            if categories:
+                self.category_var.set(categories[0])
+                self._update_preset_options()
+
+    def _load_first_preset_in_category(self, category: str):
+        """Load the first preset in the given category"""
+        if category in self.presets:
+            presets = self.presets[category]
+            if presets:
+                first_preset = next(iter(presets.keys()))
+                self.preset_var.set(first_preset)
+                self._load_preset(first_preset)
+
+    def _safe_update_voice_menu(self):
+        """Thread-safe voice menu update"""
+        if not hasattr(self, 'voice_menu'):
+            return
+
+        try:
+            voices = self.tts.get_voices()
+            self.voice_menu.configure(values=voices)
+            if voices:
+                self.voice_var.set(voices[0])
+        except Exception as e:
+            print(f"Voice menu update failed: {str(e)}")
+
+    def _update_voice_menu(self):
+        """Thread-safe UI update"""
+        if hasattr(self, 'voice_menu') and self.voice_menu:
+            voices = self.tts.get_voices()
+            self.voice_menu.configure(values=voices or ["No voices available"])
+            if voices:
+                self.voice_var.set(voices[0])
+
+    def _update_model(self):
+        if not self.model_var.get():
+            self.status_var.set("Select a model first")
+            return
+
+        model_name = self.model_var.get()
+        if model_name not in self.supported_models:
+            self.status_var.set(f"Cannot update: {model_name} is not supported")
+            return
+
+        try:
+            self.status_var.set(f"Updating {model_name}...")
+            self.update_idletasks()
+
+            self.tts.update_model(model_name)
+            self.status_var.set(f"Updated: {model_name}")
+
+            # Reload the model after update
+            self._load_model(model_name)
+        except Exception as e:
+            self.status_var.set(f"Update failed: {str(e)}")
+
+    # Dynamic preset loader
+    def _update_presets(self):
+        """Update presets based on current voice selection"""
+        try:
+            if not hasattr(self, 'preset_menu') or not self.preset_menu:
+                return
+
+            voice = self.voice_var.get()
+            if not voice:
+                return
+
+            if '(' in voice:  # Multi-language format: "Russian (aidar)"
+                lang = voice.split('(')[0].strip().lower()
+            else:
+                lang = 'en'  # Default
+
+            filtered_presets = [
+                f"{name} [{lang}]"
+                for name, texts in self.presets.items()
+                if lang in texts or 'default' in texts
+            ]
+
+            if hasattr(self, 'preset_menu'):
+                self.preset_menu.configure(values=filtered_presets)
+
+        except Exception as e:
+            print(f"Preset update error: {e}")
+
+    def _update_preset_options(self, *args):
+        """Refresh preset dropdown options"""
+        try:
+            category = self.category_var.get()
+            if not category or not hasattr(self, 'presets'):
+                self.preset_menu.configure(values=[])
+                return
+
+            presets = self.presets.get(category, {})
+            preset_names = list(presets.keys())
+
+            # Get current text and selection
+            current_text = self.text_input.get("1.0", "end-1c").strip()
+            current_preset = self.preset_var.get()
+
+            # Show "Untitled" only if there's text and no real preset selected
+            if current_text and (not current_preset or current_preset == "Untitled"):
+                if "Untitled" not in preset_names:
+                    preset_names.insert(0, "Untitled")
+
+            self.preset_menu.configure(values=preset_names)
+
+            # Maintain current selection if it exists
+            if current_preset in preset_names:
+                self.preset_var.set(current_preset)
+            elif current_text:
+                self.preset_var.set("Untitled")
+            else:
+                self.preset_var.set("")
+
+        except Exception as e:
+            print(f"Preset update error: {e}")
+            self.preset_menu.configure(values=[])
+
+    def _smart_play(self):
+        if self.is_playing:
+            sd.stop()
+            self.is_playing = False
+            self.play_btn.configure(text="в–¶ Synthesize & Play")
+            self.progress_value.set(0)  # Update using the DoubleVar
+            return
+
+        # Set initial progress
+        self.progress_value.set(0.1)  # 10% when starting
+
+        text = self.text_input.get("1.0", "end-1c").strip()
+        if not text:
+            self.status_var.set("Error: Enter text first")
+            return
+
+        self.progress.set(0)
+        self.status_var.set("Synthesizing...")
+        self.play_btn.configure(state="disabled")
+        self.update()
+
+        threading.Thread(
+            target=self._generate_and_play,
+            args=(text,),
+            daemon=True
+        ).start()
+
+        # Update progress during generation
+        self.progress_value.set(0.5)  # 50% during processing
+
+        # When finished
+        self.progress_value.set(1.0)  # 100% when done
+
+    def _playback_finished(self):
+        self.is_playing = False
+        self.play_btn.configure(text="в–¶ Synthesize & Play")
+        self.status_var.set("Playback finished")
+
+    def _export_audio(self):
+        if self.audio_data is None:
+            self.status_var.set("Generate audio first")
+            return
+
+        try:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".wav",
+                filetypes=[("WAV files", "*.wav")]
+            )
+            if file_path:
+                sf.write(file_path, self.audio_data, 48000)
+                self.status_var.set(f"Exported: {os.path.basename(file_path)}")
+        except Exception as e:
+            self.status_var.set(f"Export failed: {str(e)}")
+
+    def _on_close(self):
+        """Handle window closing"""
+        # Clean up tooltips
+        for tip in self.tooltips:
+            try:
+                tip.destroy()
+            except:
+                pass
+
+        # Only try to stop TTS if it was initialized
+        if hasattr(self, 'tts'):
+            if hasattr(self.tts, 'watcher') and self.tts.watcher:
+                self.tts.watcher.stop()
+
+        # Stop audio if playing
+        if hasattr(self, 'is_playing') and self.is_playing:
+            sd.stop()
+
+        self.destroy()
+from gui import VoxiomTTSApp
+import multiprocessing
+import sys
+
+def main():
+    try:
+        multiprocessing.freeze_support()
+        print("Starting application...")
+        app = VoxiomTTSApp()
+        app.mainloop()
+    except Exception as e:
+        print(f"Application failed: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+import json
+from pathlib import Path
+from typing import Dict, Any
+
+def load_presets(file_path: str = "presets.json") -> Dict[str, Any]:
+    """Load presets from JSON file with error handling"""
+    try:
+        with open(Path(__file__).parent / file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Failed to load presets: {e}")
+        return {
+            "Error": {
+                "default": "Presets failed to load. Please check presets.json"
+            }
+        }
+import os
+import json
+import torch
+from pathlib import Path
+from typing import Dict, List, Optional
+
+class SileroTTS:
+    def __init__(self, models_dir: str = 'models/tts'):
+        self.models_dir = os.path.normpath(models_dir)
+        os.makedirs(self.models_dir, exist_ok=True)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        self.models = {}
+        self.current_model = None
+
+        self.supported_models = {
+            "v3_en": {
+                "file": "v3_en.pt",
+                "sample_rates": [8000, 24000, 48000],  # Note: plural
+                "speakers": [f'en_{i}' for i in range(118)],
+                "default_rate": 48000
+            },
+            "v3_1_ru": {
+                "file": "v3_1_ru.pt",
+                "sample_rates": [8000, 24000, 48000],  # Note: plural
+                "speakers": ['aidar', 'baya', 'kseniya', 'xenia', 'eugene', 'random'],
+                "default_rate": 48000
+            },
+            "v4_ru": {
+                "file": "v4_ru.pt",
+                "sample_rates": [8000, 24000, 48000],  # Note: plural
+                "speakers": ['aidar', 'baya', 'kseniya', 'xenia', 'eugene', 'random'],
+                "default_rate": 48000,
+                "supports_ssml": True
+            }
+        }
+
+        self.presets = self._load_presets()
+
+    def _load_presets(self) -> dict:
+        presets_path = os.path.join(os.path.dirname(__file__), 'presets.json')
+        default_presets = {
+            "General": {
+                "default": {
+                    "text": "Please check your presets.json file for errors",
+                    "ssml": False  # Note: Python's True/False, not JSON's true/false
+                }
+            }
+        }
+
+        try:
+            with open(presets_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"Invalid JSON in presets file: {e}")
+            return default_presets
+        except Exception as e:
+            print(f"Failed to load presets: {e}")
+            return default_presets
+
+    def load_model(self, model_name: str) -> bool:
+        try:
+            if model_name not in self.supported_models:
+                raise ValueError(f"Model {model_name} not supported")
+
+            model_path = os.path.join(self.models_dir, self.supported_models[model_name]["file"])
+
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+
+            # Clear CUDA cache before loading
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # Try standard loading first
+            try:
+                model = torch.jit.load(model_path, map_location=self.device)
+            except Exception:
+                # Fallback to PackageImporter
+                importer = torch.package.PackageImporter(model_path)
+                model = importer.load_pickle("tts_models", "model")
+
+            model.to(self.device)
+            self.models[model_name] = model
+            self.current_model = model_name
+            return True
+
+        except Exception as e:
+            print(f"Model loading failed: {str(e)}")
+            return False
+
+    def get_model_info(self, model_name: str) -> dict:
+        """Get complete model configuration"""
+        if model_name not in self.supported_models:
+            raise ValueError(f"Model {model_name} not supported")
+        return self.supported_models[model_name]
+
+    def speak(self, text: str, speaker: str = None, ssml: bool = False) -> torch.Tensor:
+        if not self.current_model:
+            raise ValueError("No model loaded")
+
+        model = self.models[self.current_model]
+        config = self.supported_models[self.current_model]
+
+        if not speaker:
+            speaker = config["speakers"][0]
+
+        # Clean and prepare text
+        text = text.strip()
+        if not text:
+            raise ValueError("Empty text input")
+
+        # Handle multiline text
+        text = ' '.join(line.strip() for line in text.split('\n') if line.strip())
+
+        try:
+            if self.current_model == "v4_ru":
+                if ssml:
+                    if not text.startswith("<speak>"):
+                        text = f"<speak>{text}</speak>"
+                    return model.apply_tts(
+                        ssml_text=text,
+                        speaker=speaker,
+                        sample_rate=config["default_rate"]
+                    )
+                else:
+                    # Remove any SSML tags if not in SSML mode
+                    text = text.replace("<speak>", "").replace("</speak>", "")
+                    text = text.replace("<prosody", "").replace(">", "")
+                    text = text.replace("<break", "").replace("/>", "")
+                    return model.apply_tts(
+                        text=text,
+                        speaker=speaker,
+                        sample_rate=config["default_rate"]
+                    )
+            else:  # v3 models
+                # Always remove SSML tags for non-SSML models
+                text = text.replace("<speak>", "").replace("</speak>", "")
+                text = text.replace("<prosody", "").replace(">", "")
+                text = text.replace("<break", "").replace("/>", "")
+                return model.apply_tts(
+                    text=text,
+                    speaker=speaker,
+                    sample_rate=config["default_rate"]
+                )
+        except Exception as e:
+            raise ValueError(f"Speech generation failed: {str(e)}")
+
+    def get_voices(self) -> List[str]:
+        if not self.current_model:
+            return []
+        return self.supported_models[self.current_model]["speakers"]
+
+    def supports_ssml(self) -> bool:
+        return self.supported_models.get(self.current_model, {}).get("supports_ssml", False)
+import os
+import torch
+import soundfile as sf
+from pydub import AudioSegment
+from pydub.playback import play
+
+def check_gpu():
+    """Returns GPU status string for logging."""
+    if torch.cuda.is_available():
+        return f"GPU: {torch.cuda.get_device_name(0)} (CUDA {torch.version.cuda})"
+    return "No GPU detected. Using CPU."
+
+def validate_text(text: str) -> bool:
+    """Check if text is valid for TTS."""
+    return len(text.strip()) > 0
+
+def save_audio(audio, filename: str, sample_rate: int = 48000):
+    """Save audio to outputs/ folder."""
+    os.makedirs("outputs", exist_ok=True)
+    sf.write(f"outputs/{filename}", audio, sample_rate)
+
+def play_audio(audio, sample_rate: int = 48000):
+    """Play audio using pydub."""
+    audio_segment = AudioSegment(
+        audio.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=audio.dtype.itemsize,
+        channels=1
+    )
+    play(audio_segment)

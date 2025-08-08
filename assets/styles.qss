@@ -1,0 +1,7 @@
+QPushButton {
+    min-width: 80px;
+    padding: 5px;
+}
+QProgressBar {
+    height: 20px;
+}

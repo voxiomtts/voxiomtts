@@ -6,7 +6,11 @@ __pycache__/
 *.pyo
 *.pyd
 *.spec
+voxium.0002/
+.venv/
+draft/
 models/
 dist/
 build/
-EOL
+"version.txt"
+"error_log.txt"

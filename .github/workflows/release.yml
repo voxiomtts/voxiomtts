@@ -1,0 +1,26 @@
+name: Release
+on:
+  push:
+    tags: v*  # Trigger on tags like v1.0.0
+
+jobs:
+  release:
+    runs-on: windows-latest  # Match your app's OS
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Update version.txt
+        run: echo ${{ steps.version.outputs.VERSION }} > version.txt
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          name: "v${{ steps.version.outputs.VERSION }}"
+          body: "Release notes here"
+          files: |
+            version.txt
+            run_tts.bat
+            *.py
+            assets/*
