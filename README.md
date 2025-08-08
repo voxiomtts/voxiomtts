@@ -6,9 +6,10 @@ A text-to-speech application using Silero TTS models with a modern GUI.
 
 ## Features
 - Multiple voice models (English, Russian)
-- SSML support for Russian (v4_ru model)
+- SSML support for Russian (v4_ru model), coming soon…
 - Preset management
-- Real-time audio visualization
+- Simple real time audio visualization
+- CPU support only, yet… :)
 
 ## Quick Start
 
