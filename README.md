@@ -1,4 +1,4 @@
-![Logo](./assets/voxiom256.png){: width="256" height="256" }
+<img src="./assets/voxiom256.png" alt="Alt" width="256" height="256">
 
 # Voxiom TTS GUI
 
