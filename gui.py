@@ -741,73 +741,6 @@ class VoxiomTTSApp(ctk.CTk):
                 ax.set_ylim(-1.1, 1.1)
             self.canvas.draw()
 
-    # def _update_waveform(self, audio_data):
-    #     """Update waveform display with proper mono/stereo handling"""
-    #     try:
-    #         # Clear previous plots
-    #         self.ax_left.clear()
-    #         self.ax_right.clear()
-    #
-    #         # Configure axes
-    #         for ax in [self.ax_left, self.ax_right]:
-    #             ax.grid(True, color='#333333', linestyle='--', alpha=0.5)
-    #             ax.set_ylim(-1.1, 1.1)
-    #             ax.set_xticklabels([])
-    #             ax.set_yticklabels([])
-    #
-    #         # Ensure audio_data is 2D (samples, channels)
-    #         if len(audio_data.shape) == 1:
-    #             audio_data = np.expand_dims(audio_data, axis=1)
-    #
-    #         # Get number of channels
-    #         num_channels = audio_data.shape[1]
-    #
-    #         # Plot based on output mode and available channels
-    #         if self.output_mode.get() == "mono" or num_channels == 1:
-    #             # Mono display - same data on both channels
-    #             mono_data = audio_data[:,0] if num_channels > 1 else audio_data[:,0]
-    #             self.line_left, = self.ax_left.plot(mono_data, color='#4CAF50')
-    #             self.line_right, = self.ax_right.plot(mono_data, color='#4CAF50')
-    #         else:
-    #             # Stereo display
-    #             self.line_left, = self.ax_left.plot(audio_data[:,0], color='#4CAF50')
-    #             if num_channels > 1:  # Ensure we have a right channel
-    #                 self.line_right, = self.ax_right.plot(audio_data[:,1], color='#4CAF50')
-    #             else:
-    #                 self.line_right, = self.ax_right.plot(audio_data[:,0], color='#4CAF50')
-    #
-    #         # Add RMS visualization
-    #         for ax, channel in zip([self.ax_left, self.ax_right],
-    #                              [audio_data[:,0],
-    #                               audio_data[:,1] if num_channels > 1 else audio_data[:,0]]):
-    #             rms = np.sqrt(np.mean(channel**2))
-    #             ax.fill_betweenx(
-    #                 [-1.1, -1.1 + rms*2.2],
-    #                 0, len(channel),
-    #                 color='#4CAF50',
-    #                 alpha=0.1
-    #             )
-    #
-    #         # Redraw cursor lines
-    #         self.cursor_left = self.ax_left.axvline(x=0, color='red', linewidth=1.5, alpha=0)
-    #         self.cursor_right = self.ax_right.axvline(x=0, color='red', linewidth=1.5, alpha=0)
-    #
-    #         # Update duration display
-    #         duration = len(audio_data) / 48000
-    #         self.time_text.set_text(f"00:00.000 / {self._format_duration(duration)}")
-    #
-    #         self.canvas.draw()
-    #
-    #     except Exception as e:
-    #         print(f"Waveform update error: {e}")
-    #         # Fallback to empty display
-    #         self.ax_left.clear()
-    #         self.ax_right.clear()
-    #         for ax in [self.ax_left, self.ax_right]:
-    #             ax.grid(True, color='#333333', linestyle='--', alpha=0.5)
-    #             ax.set_ylim(-1.1, 1.1)
-    #         self.canvas.draw()
-
     def _format_duration(self, seconds):
         """Format seconds to MM:SS.mmm"""
         mins = int(seconds // 60)
@@ -1268,84 +1201,6 @@ class VoxiomTTSApp(ctk.CTk):
             font=("Arial", 11, "bold")
         )
         self.large_time.pack(side="right", padx=10)
-
-    # def _create_waveform_display(self, parent):
-    #     frame = ctk.CTkFrame(parent, height=120, fg_color=self.dark_frame)  # Reduced height
-    #     frame.pack(fill="x", padx=5, pady=(0,5), expand=False)  # Added padding top
-    #
-    #     self.fig = Figure(figsize=(10, 1.5), dpi=100, facecolor=self.dark_frame)  # Smaller figure
-    #     gs = self.fig.add_gridspec(2, 1, height_ratios=[1, 1])  # Only waveform channels
-    #
-    #     # Waveform channels
-    #     self.ax_left = self.fig.add_subplot(gs[0], facecolor=self.dark_frame)
-    #     self.ax_right = self.fig.add_subplot(gs[1], facecolor=self.dark_frame)
-    #
-    #     # Configure axes
-    #     for ax, label in zip([self.ax_left, self.ax_right], ["L", "R"]):
-    #         ax.grid(True, color='#333333', linestyle=':', alpha=0.3)
-    #         ax.set_ylim(-1.1, 1.1)
-    #         ax.set_yticks([])
-    #         ax.set_xticklabels([])
-    #         ax.text(0.01, 0.9, label, transform=ax.transAxes,
-    #                color='white', fontsize=10, fontweight='bold')
-    #
-    #     # Thicker waveform lines
-    #     self.line_left, = self.ax_left.plot([], [], color='#4CAF50', linewidth=1.5)
-    #     self.line_right, = self.ax_right.plot([], [], color='#4CAF50', linewidth=1.5)
-    #
-    #     # Visible cursors (red with higher alpha)
-    #     self.cursor_left = self.ax_left.axvline(x=0, color='#FF0000', linewidth=2, alpha=0.9)
-    #     self.cursor_right = self.ax_right.axvline(x=0, color='#FF0000', linewidth=2, alpha=0.9)
-    #
-    #     self.canvas = FigureCanvasTkAgg(self.fig, master=frame)
-    #     self.canvas.get_tk_widget().pack(fill="x", expand=False)
-    #
-    #     # Add click event for dragging cursor
-    #     self.canvas.mpl_connect('button_press_event', self._on_waveform_click)
-    #
-    #     # Time display frame below waveform
-    #     time_frame = ctk.CTkFrame(parent, height=28, fg_color="#252525")
-    #     time_frame.pack(fill="x", padx=5, pady=(0,5))
-    #
-    #     # Current position / total duration
-    #     self.time_display1 = ctk.CTkLabel(
-    #         time_frame,
-    #         text="00:00.500 / 00:00.500",
-    #         font=("Consolas", 11)
-    #     )
-    #     self.time_display1.pack(side="left", padx=10)
-    #
-    #     # Selection start/end
-    #     self.time_display2 = ctk.CTkLabel(
-    #         time_frame,
-    #         text="00:00.000 / 00:00.000",
-    #         font=("Consolas", 11)
-    #     )
-    #     self.time_display2.pack(side="left", padx=10)
-    #
-    #     # Play status
-    #     self.play_status = ctk.CTkLabel(
-    #         time_frame,
-    #         text="Ready to play",
-    #         font=("Arial", 11)
-    #     )
-    #     self.play_status.pack(side="left", padx=10)
-    #
-    #     # Track number
-    #     self.track_number = ctk.CTkLabel(
-    #         time_frame,
-    #         text="1",
-    #         font=("Arial", 11)
-    #     )
-    #     self.track_number.pack(side="right", padx=10)
-    #
-    #     # Large time display
-    #     self.large_time = ctk.CTkLabel(
-    #         time_frame,
-    #         text="99:00 / 99:00",
-    #         font=("Arial", 11, "bold")
-    #     )
-    #     self.large_time.pack(side="right", padx=10)
 
     def _on_waveform_click(self, event):
         if not hasattr(self, 'audio_data') or self.audio_data is None:
@@ -2465,16 +2320,6 @@ class VoxiomTTSApp(ctk.CTk):
             width=300  # Increased width
         )
         self.status_label.pack(side="left", fill="x", expand=True)
-
-        # # Model indicator - fixed empty text issue
-        # self.model_indicator = ctk.CTkLabel(
-        #     status_frame,
-        #     text="No model loaded" if not hasattr(self, 'model_var') else self.model_var.get(),
-        #     font=("Arial", 10),
-        #     width=200,
-        #     anchor="e"
-        # )
-        # self.model_indicator.pack(side="right", padx=(0,10))
 
         # Model indicator - properly initialized
         self.model_var.trace_add('write', self._update_model_indicator)  # Add trace
